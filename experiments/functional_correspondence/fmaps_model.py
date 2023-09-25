@@ -30,12 +30,14 @@ def compute_correspondence_iterative(feat_x, feat_y, evals_x, evals_y, evecs_tra
     B_var = cp.Parameter((B.size(0), B.size(1)))
     L1_var = cp.Parameter((evals_x.size(1)))
     L2_var = cp.Parameter((evals_y.size(1)))
+    lmbda = cp.Parameter(1, nonneg=True)
     objective = cp.Minimize(cp.norm(C @ A_var - B_var, 'fro') +
-                            cp.norm(C @ cp.diag(L1_var) - cp.diag(L2_var) @ C, 'fro'))
+                            lmbda * cp.norm(C @ cp.diag(L1_var) - cp.diag(L2_var) @ C, 'fro'))
 
     problem = cp.Problem(objective)
 
-    cvxpylayer = CvxpyLayer(problem, parameters=[A_var, B_var, L1_var, L2_var], variables=[C])
+    cvxpylayer = CvxpyLayer(problem, parameters=[A_var, B_var, L1_var, L2_var, lambda_param],
+                            variables=[C])
     C, = cvxpylayer(A, B, evals_x.squeeze(0), evals_y.squeeze(0))
 
     return C.to(feat_x.device).unsqueeze(0)
