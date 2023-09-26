@@ -30,13 +30,12 @@ def compute_correspondence_iterative(feat_x, feat_y, evals_x, evals_y, evecs_tra
     B_var = cp.Parameter((B.size(0), B.size(1)))
     L1_var = cp.Parameter((evals_x.size(1)))
     L2_var = cp.Parameter((evals_y.size(1)))
-    lmbda = cp.Parameter(1, nonneg=True)
     objective = cp.Minimize(cp.norm(C @ A_var - B_var, 'fro') +
-                            lmbda * cp.norm(C @ cp.diag(L1_var) - cp.diag(L2_var) @ C, 'fro'))
+                            lambda_param * cp.norm(C @ cp.diag(L1_var) - cp.diag(L2_var) @ C, 'fro'))
 
     problem = cp.Problem(objective)
 
-    cvxpylayer = CvxpyLayer(problem, parameters=[A_var, B_var, L1_var, L2_var, lambda_param],
+    cvxpylayer = CvxpyLayer(problem, parameters=[A_var, B_var, L1_var, L2_var],
                             variables=[C])
     C, = cvxpylayer(A, B, evals_x.squeeze(0), evals_y.squeeze(0))
 
@@ -73,6 +72,37 @@ def compute_correspondence_explicit(feat_x, feat_y, evals_x, evals_y, evecs_tran
     C = torch.cat(C_i, dim=1)
 
     return C
+
+
+def compute_correspondence_expanded(feat_x, feat_y, evals_x, evals_y, evecs_trans_x, evecs_trans_y, lambda_param=1e-3):
+    """
+    Computes the functional map correspondence matrix C given features from two shapes.
+
+    Has no trainable parameters.
+    """
+
+    A = evecs_trans_x @ feat_x
+    B = evecs_trans_y @ feat_y
+    # A and B should be same shape
+    k = A.size(0)
+    m = A.size(1)
+
+    A_t = A.reshape(m, k)
+    Ik = torch.eye(k, device=A.device)
+    Im = torch.eye(m, device=A.device)
+
+    Ik_At = torch.kron(Ik, A_t)
+    Ik_A = torch.kron(Ik, A)
+    lxk_I = torch.kron(torch.diag(evals_x.squeeze(0)), Ik)
+    Ik_ly = torch.kron(Ik, torch.diag(evals_y.squeeze(0)))
+
+    first = Ik_A @ Ik_At
+    second = (lxk_I - Ik_ly).T @ (lxk_I - Ik_ly)
+
+    # TODO: the right hand side should be B.T @ A
+    C = torch.linalg.solve(first + lambda_param * second, Ik_A @ B.reshape(k * m))
+
+    return C.reshape(k, k)
 
 
 class FunctionalMapCorrespondenceWithDiffusionNetFeatures(nn.Module):
@@ -115,15 +145,14 @@ class FunctionalMapCorrespondenceWithDiffusionNetFeatures(nn.Module):
         evals1, evals2 = evals1[:self.n_fmap], evals2[:self.n_fmap]
         import time
         t0 = time.time()
-        C_iterative= compute_correspondence_iterative(feat1, feat2, evals1, evals2, evecs_trans1, evecs_trans2, lambda_param=self.lambda_param)
-        print("iterative", time.time()-t0)
+        C_expanded = compute_correspondence_expanded(feat1, feat2, evals1, evals2, evecs_trans1, evecs_trans2, lambda_param=self.lambda_param)
+        print("expanded", time.time()-t0)
         t0 = time.time()
         C_explicit= compute_correspondence_explicit(feat1, feat2, evals1, evals2, evecs_trans1, evecs_trans2, lambda_param=self.lambda_param)
         print("explicit", time.time() - t0)
-
-        diff = torch.mean(torch.abs(C_iterative - C_explicit))
+        diff = torch.mean(torch.abs(C_expanded - C_explicit))
         print("diff: ", diff)
 
-        C_pred = C_iterative
+        C_pred = C_expanded
 
         return C_pred, feat1, feat2

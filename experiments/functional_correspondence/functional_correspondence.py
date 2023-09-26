@@ -7,6 +7,7 @@ import numpy as np
 
 import torch
 import torch.nn
+from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import DataLoader
 
 from fmaps_model import FunctionalMapCorrespondenceWithDiffusionNetFeatures
@@ -113,7 +114,7 @@ def train_epoch(epoch):
 
     losses = []
     
-    for data in tqdm(train_loader):
+    for i, data in enumerate(tqdm(train_loader)):
 
         # Get data
         shape1, shape2, C_gt = data
@@ -130,13 +131,15 @@ def train_epoch(epoch):
         C_pred, feat1, feat2 = model(shape1, shape2)
 
         # Evaluate loss 
-        loss = torch.mean(torch.square(C_pred-C_gt)) # L2 loss
+        loss = torch.mean(torch.square(C_pred - C_gt)) # L2 loss
         losses.append(toNP(loss))
         loss.backward()
 
         # Step the optimizer
         optimizer.step()
         optimizer.zero_grad()
+
+        writer.add_scalar("loss/train", loss.detach().item(), i + len(train_loader) * epoch)
 
     train_loss = np.mean(losses)
 
@@ -156,7 +159,7 @@ def test(with_geodesic_error=False):
     
     with torch.no_grad():
 
-        for data in tqdm(test_loader):
+        for i, data in enumerate(tqdm(test_loader)):
         
             # Get data
             shape1, shape2, C_gt = data
@@ -175,6 +178,7 @@ def test(with_geodesic_error=False):
 
             # Loss
             loss = torch.mean(torch.square(C_pred-C_gt)) # L2 loss
+            writer.add_scalar("loss/test", loss.detach().item(), i + len(train_loader) * epoch)
             losses.append(toNP(loss))
 
             # Compute the geodesic error in the vertex-to-vertex correspondence
@@ -201,6 +205,7 @@ def test(with_geodesic_error=False):
                 errors = diffusion_net.geometry.geodesic_label_errors(verts1_orig, faces1, vts2on1, vts1, normalization='area', geodesic_cache_dir=geodesic_cache_dir)
                 
                 geodesic_error = toNP(torch.mean(errors))
+                writer.add_scalar("geodesic_error/test", geodesic_error, i + len(train_loader) * epoch)
                 geodesic_errors.append(geodesic_error)
 
 
@@ -212,6 +217,7 @@ def test(with_geodesic_error=False):
 if train:
     print("Training...")
 
+    writer = SummaryWriter()
     for epoch in range(n_epoch):
         train_loss = train_epoch(epoch)
         test_loss, test_geodesic_error = test(with_geodesic_error=True)
@@ -219,6 +225,7 @@ if train:
 
         print(" ==> saving last model to " + model_save_path)
         torch.save(model.state_dict(), model_save_path)
+    writer.close()
 
 
 # Test
