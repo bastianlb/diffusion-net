@@ -80,29 +80,33 @@ def compute_correspondence_expanded(feat_x, feat_y, evals_x, evals_y, evecs_tran
 
     Has no trainable parameters.
     """
-
     A = evecs_trans_x @ feat_x
     B = evecs_trans_y @ feat_y
     # A and B should be same shape
     k = A.size(0)
     m = A.size(1)
 
+    vec_B = B.T.reshape(m * k, 1)
+
     A_t = A.reshape(m, k)
-    Ik = torch.eye(k, device=A.device)
-    Im = torch.eye(m, device=A.device)
+    Ik = torch.eye(k, device=A.device, dtype=torch.float32)
 
-    Ik_At = torch.kron(Ik, A_t)
-    Ik_A = torch.kron(Ik, A)
-    lxk_I = torch.kron(torch.diag(evals_x.squeeze(0)), Ik)
-    Ik_ly = torch.kron(Ik, torch.diag(evals_y.squeeze(0)))
+    At_Ik = torch.kron(A_t, Ik)
 
-    first = Ik_A @ Ik_At
-    second = (lxk_I - Ik_ly).T @ (lxk_I - Ik_ly)
+    lx = torch.diag(evals_x.squeeze(0))
+    ly = torch.diag(evals_y.squeeze(0))
+    lx_Ik = torch.kron(lx, Ik)
+    Ik_ly = torch.kron(Ik, ly)
+    Delta = (lx_Ik - Ik_ly)
 
-    # TODO: the right hand side should be B.T @ A
-    C = torch.linalg.solve(first + lambda_param * second, Ik_A @ B.reshape(k * m))
+    first = At_Ik.T @ At_Ik
+    second = Delta.T @ Delta
+    rhs = At_Ik.T @ vec_B
+    op = first + lambda_param * second
 
-    return C.reshape(k, k)
+    C = torch.linalg.solve(op, rhs)
+
+    return C.reshape(k, k).T
 
 
 class FunctionalMapCorrespondenceWithDiffusionNetFeatures(nn.Module):
@@ -125,7 +129,7 @@ class FunctionalMapCorrespondenceWithDiffusionNetFeatures(nn.Module):
         self.input_features = input_features
         self.lambda_param = lambda_param
 
-    def forward(self, shape1, shape2):
+    def forward(self, shape1, shape2, i=0):
         verts1, faces1, frames1, mass1, L1, evals1, evecs1, gradX1, gradY1, hks1, vts1 = shape1
         verts2, faces2, frames2, mass2, L2, evals2, evecs2, gradX2, gradY2, hks2, vts2 = shape2
 
@@ -146,13 +150,35 @@ class FunctionalMapCorrespondenceWithDiffusionNetFeatures(nn.Module):
         import time
         t0 = time.time()
         C_expanded = compute_correspondence_expanded(feat1, feat2, evals1, evals2, evecs_trans1, evecs_trans2, lambda_param=self.lambda_param)
-        print("expanded", time.time()-t0)
+        # print("expanded", time.time()-t0)
         t0 = time.time()
         C_explicit= compute_correspondence_explicit(feat1, feat2, evals1, evals2, evecs_trans1, evecs_trans2, lambda_param=self.lambda_param)
-        print("explicit", time.time() - t0)
-        diff = torch.mean(torch.abs(C_expanded - C_explicit))
-        print("diff: ", diff)
+        # print("explicit", time.time() - t0)
+        C_diff = (torch.abs(C_expanded - C_explicit))
+        print("diff: ", torch.sum(C_diff).item())
+        import matplotlib.pyplot as plt
 
-        C_pred = C_expanded
+        # Create a figure with three subplots
+        fig, axs = plt.subplots(1, 3, figsize=(15, 5))
+
+# Plotting the first heatmap
+        heatmap1 = axs[0].imshow(C_explicit.squeeze(0).detach().cpu().numpy(), cmap='hot', interpolation='nearest')
+        axs[0].set_title('C_explicit')
+        fig.colorbar(heatmap1, ax=axs[0], fraction=0.046, pad=0.04)  # Adjust colorbar size and position
+
+# Plotting the second heatmap
+        heatmap2 = axs[1].imshow(C_expanded.squeeze(0).detach().cpu().numpy(), cmap='hot', interpolation='nearest')
+        axs[1].set_title('C_expanded')
+        fig.colorbar(heatmap2, ax=axs[1], fraction=0.046, pad=0.04)  # Adjust colorbar size and position
+
+# Plotting the difference heatmap
+        heatmap3 = axs[2].imshow(C_diff.squeeze(0).detach().cpu().numpy(), cmap='coolwarm', interpolation='nearest')
+        axs[2].set_title('Difference (C_explicit - C_expanded)')
+        fig.colorbar(heatmap3, ax=axs[2], fraction=0.046, pad=0.04)  # Adjust colorbar size and position
+
+# Save the figure
+        plt.savefig(f'figs/heatmaps_and_difference_{i}.png', format='png')
+
+        C_pred = C_explicit
 
         return C_pred, feat1, feat2

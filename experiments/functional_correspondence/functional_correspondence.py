@@ -128,7 +128,7 @@ def train_epoch(epoch):
             shape2[0] = diffusion_net.utils.random_rotate_points(shape2[0])
 
         # Apply the model
-        C_pred, feat1, feat2 = model(shape1, shape2)
+        C_pred, feat1, feat2 = model(shape1, shape2, i)
 
         # Evaluate loss 
         loss = torch.mean(torch.square(C_pred - C_gt)) # L2 loss
@@ -226,7 +226,6 @@ if train:
         print(" ==> saving last model to " + model_save_path)
         torch.save(model.state_dict(), model_save_path)
     writer.close()
-
 
 # Test
 mean_loss, mean_geodesic_error = test(with_geodesic_error=True)
