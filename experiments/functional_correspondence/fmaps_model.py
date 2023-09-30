@@ -88,7 +88,7 @@ def compute_correspondence_expanded(feat_x, feat_y, evals_x, evals_y, evecs_tran
 
     vec_B = B.T.reshape(m * k, 1)
 
-    A_t = A.reshape(m, k)
+    A_t = A.T.contiguous().reshape(m, k)
     Ik = torch.eye(k, device=A.device, dtype=torch.float32)
 
     At_Ik = torch.kron(A_t, Ik)
