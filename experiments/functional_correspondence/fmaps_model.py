@@ -83,8 +83,7 @@ def compute_correspondence_expanded(feat_x, feat_y, evals_x, evals_y, evecs_tran
     A = evecs_trans_x @ feat_x
     B = evecs_trans_y @ feat_y
     # A and B should be same shape
-    k = A.size(0)
-    m = A.size(1)
+    k, m = A.size(0), A.size(1)
 
     vec_B = B.T.reshape(m * k, 1).contiguous()
 
