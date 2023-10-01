@@ -86,9 +86,9 @@ def compute_correspondence_expanded(feat_x, feat_y, evals_x, evals_y, evecs_tran
     k = A.size(0)
     m = A.size(1)
 
-    vec_B = B.T.reshape(m * k, 1)
+    vec_B = B.T.reshape(m * k, 1).contiguous()
 
-    A_t = A.reshape(m, k)
+    A_t = A.T.contiguous()
     Ik = torch.eye(k, device=A.device, dtype=torch.float32)
 
     At_Ik = torch.kron(A_t, Ik)
@@ -125,7 +125,7 @@ class FunctionalMapCorrespondenceWithDiffusionNetFeatures(nn.Module):
             dropout=True,
         )
 
-        self.n_fmap = 30
+        self.n_fmap = n_fmap
         self.input_features = input_features
         self.lambda_param = lambda_param
 
@@ -150,10 +150,10 @@ class FunctionalMapCorrespondenceWithDiffusionNetFeatures(nn.Module):
         import time
         t0 = time.time()
         C_expanded = compute_correspondence_expanded(feat1, feat2, evals1, evals2, evecs_trans1, evecs_trans2, lambda_param=self.lambda_param)
-        # print("expanded", time.time()-t0)
+        print("expanded", time.time()-t0)
         t0 = time.time()
         C_explicit= compute_correspondence_explicit(feat1, feat2, evals1, evals2, evecs_trans1, evecs_trans2, lambda_param=self.lambda_param)
-        # print("explicit", time.time() - t0)
+        print("explicit", time.time() - t0)
         C_diff = (torch.abs(C_expanded - C_explicit))
         print("diff: ", torch.sum(C_diff).item())
         import matplotlib.pyplot as plt
