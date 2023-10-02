@@ -5,47 +5,66 @@ import psutil
 import numpy as np
 import torch
 
-def timing_and_memory(f):
+
+def timing_and_memory(f, N=10):
     @wraps(f)
     def wrap(*args, **kw):
-        # Initial time
-        ts = time()
+        total_time = 0
+        total_cpu_memory = 0
+        total_cuda_allocated = 0
+        total_cuda_reserved = 0
         
-        # Initial memory
-        process = psutil.Process()
-        init_cpu_memory = process.memory_info().rss
-        
-        if torch.cuda.is_available():
-            init_cuda_allocated = torch.cuda.memory_allocated()
-            init_cuda_reserved = torch.cuda.memory_reserved()
-        else:
-            init_cuda_allocated = 0
-            init_cuda_reserved = 0
-        
-        # Call the wrapped function
-        result = f(*args, **kw)
-        
-        # Final time
-        te = time()
-        
-        # Final memory
-        final_cpu_memory = process.memory_info().rss
-        
-        if torch.cuda.is_available():
-            final_cuda_allocated = torch.cuda.memory_allocated()
-            final_cuda_reserved = torch.cuda.memory_reserved()
+        for i in range(N):
+            # Initial time
+            ts = time()
             
-            print('func:%r took: %2.4f sec' % (f.__name__, te-ts))
-            print('CPU Memory Used increased by: %d bytes' % (final_cpu_memory - init_cpu_memory))
-            print('CUDA Memory Allocated increased by: %d bytes' % (final_cuda_allocated - init_cuda_allocated))
-            print('CUDA Memory Reserved increased by: %d bytes' % (final_cuda_reserved - init_cuda_reserved))
+            # Initial memory
+            process = psutil.Process()
+            init_cpu_memory = process.memory_info().rss
+            
+            if torch.cuda.is_available():
+                init_cuda_allocated = torch.cuda.memory_allocated()
+                init_cuda_reserved = torch.cuda.memory_reserved()
+            else:
+                init_cuda_allocated = 0
+                init_cuda_reserved = 0
+            
+            # Call the wrapped function
+            result = f(*args, **kw)
+            
+            # Final time
+            te = time()
+            
+            # Final memory
+            final_cpu_memory = process.memory_info().rss
+            
+            total_time += (te - ts)
+            total_cpu_memory += (final_cpu_memory - init_cpu_memory)
+            
+            if torch.cuda.is_available():
+                final_cuda_allocated = torch.cuda.memory_allocated()
+                final_cuda_reserved = torch.cuda.memory_reserved()
+                
+                total_cuda_allocated += (final_cuda_allocated - init_cuda_allocated)
+                total_cuda_reserved += (final_cuda_reserved - init_cuda_reserved)
+        
+        avg_time = total_time / N
+        avg_cpu_memory = total_cpu_memory / N
+        avg_cuda_allocated = total_cuda_allocated / N
+        avg_cuda_reserved = total_cuda_reserved / N
+        
+        print(f'func:{f.__name__} average took: {avg_time:2.4f} sec over {N} runs')
+        print(f'Average CPU Memory Used increased by: {avg_cpu_memory / (1024 * 1024):.2f} MB')
+        
+        if torch.cuda.is_available():
+            print(f'Average CUDA Memory Allocated increased by: {avg_cuda_allocated / (1024 * 1024):.2f} MB')
+            print(f'Average CUDA Memory Reserved increased by: {avg_cuda_reserved / (1024 * 1024):.2f} MB')
         else:
-            print('func:%r took: %2.4f sec' % (f.__name__, te-ts))
-            print('CPU Memory Used increased by: %d MB' % ((final_cpu_memory - init_cpu_memory) / (1000 * 1000)))
             print('CUDA is not available, measured only CPU memory usage')
         
         return result
     return wrap
+
 
 def main(C, L_x, L_y, d=5):
 # Convert the numpy matrices to PyTorch tensors
@@ -81,6 +100,7 @@ def main(C, L_x, L_y, d=5):
     assert np.allclose(expanded, expanded_torch.numpy())
 
     print("torch version:", torch.norm(torch.abs(explicit_torch.T.flatten() - expanded_torch)))
+
 
 def verify_gradient(d=5):
 
@@ -132,8 +152,8 @@ def verify_gradient(d=5):
 
 def sparse_kron(D1, D2):
     # Assuming D1 and D2 are diagonal matrices represented as 1D tensors
-    i = torch.cartesian_prod(torch.arange(len(D1)), torch.arange(len(D2))).t()
-    v = torch.ger(D1, D2).flatten()
+    i = torch.vstack([torch.arange(len(D1) * len(D2)), torch.arange(len(D1) * len(D2))])
+    v = torch.outer(D1, D2).flatten()
     size = (len(D1) * len(D2), len(D1) * len(D2))
     return torch.sparse_coo_tensor(i, v, size, dtype=D1.dtype, device=D1.device)
 
@@ -207,8 +227,11 @@ def test_memory_efficient(feat_x, feat_y, evals_x, evals_y, evecs_trans_x, evecs
     A_t = A.T.contiguous()
 
     At_Ik = sparse_kron_A_I(A_t, k)
+    # assert torch.allclose(At_Ik.to_dense(), torch.kron(A_t, torch.eye(k, device=A.device, dtype=A.dtype)))
     lx_Ik = sparse_kron(evals_x.squeeze(0), torch.ones(k, device=A.device, dtype=A.dtype))
+    # assert torch.allclose(lx_Ik.to_dense(), torch.kron(torch.diag(evals_x.squeeze(0)), torch.eye(k, device=A.device, dtype=A.dtype)))
     Ik_ly = sparse_kron(torch.ones(k, device=A.device, dtype=A.dtype), evals_y.squeeze(0))
+    # assert torch.allclose(Ik_ly.to_dense(), torch.kron(torch.eye(k, device=A.device, dtype=A.dtype), torch.diag(evals_y.squeeze(0))))
 
     Delta = (lx_Ik - Ik_ly)
 
@@ -217,7 +240,11 @@ def test_memory_efficient(feat_x, feat_y, evals_x, evals_y, evecs_trans_x, evecs
     rhs = At_Ik.T @ vec_B
     op = first + lambda_param * second
 
-    C = torch.linalg.solve(op, rhs)
+    from sparse_solve import SparseSolve
+
+    sparsesolve = SparseSolve.apply
+
+    C = sparsesolve(op, rhs)
 
     return C.reshape(k, k).T
 

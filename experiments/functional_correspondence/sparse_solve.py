@@ -22,50 +22,41 @@ def coo_torch2cupy(A):
 # Custom PyTorch sparse solver exploiting a CuPy backend
 # See https://blog.flaport.net/solving-sparse-linear-systems-in-pytorch.html
 class SparseSolve(torch.autograd.Function):
-  @staticmethod
-  def forward(ctx, A, b):
+    @staticmethod
+    def forward(ctx, A, b):
     # Sanity check
-    if A.ndim != 2 or (A.shape[0] != A.shape[1]):
-      raise ValueError("A should be a square 2D matrix.")
+        if A.ndim != 2 or (A.shape[0] < A.shape[1]):
+            raise ValueError("A should be a square 2D matrix or overdetermined.")
     # Transfer data to CuPy
-    A_cp = coo_torch2cupy(A)
-    b_cp = cp.asarray(b.data)
+        A_cp = coo_torch2cupy(A)
+        b_cp = cp.asarray(b.data)
     # Solver the sparse system
-    if (b.ndim == 1) or (A.shape[1] == 1):
-      # cp.sparse.linalg.spsolve only works if b is a vector but is fully on GPU
-      x_cp = cp.sparse.linalg.spsolve(A_cp, b_cp)
-    else:
-      # Make use of a factorisation (only the solver is then on the GPU)
-      factorisedsolver = cp.sparse.linalg.factorized(A_cp)
-      x_cp = factorisedsolver(b_cp)
+        if (b.ndim == 1) or (A.shape[1] == 1):
+            # cp.sparse.linalg.spsolve only works if b is a vector but is fully on GPU
+            x_cp = cp.sparse.linalg.spsolve(A_cp, b_cp)
+        else:
+            # Make use of a factorisation (only the solver is then on the GPU)
+            __import__('ipdb').set_trace()
+            factorisedsolver = cp.sparse.linalg.factorized(A_cp)
+            x_cp = factorisedsolver(b_cp)
     # Transfer (dense) result back to PyTorch
-    x = torch.as_tensor(x_cp, device=torchdevice)
+        x = torch.as_tensor(x_cp, device=torchdevice)
     # Not sure if the following is needed / helpful
-    if A.requires_grad or b.requires_grad:
-      x.requires_grad = True
+        if A.requires_grad or b.requires_grad:
+            x.requires_grad = True
     # Save context for backward pass
-    ctx.save_for_backward(A, b, x)
-    return x
+        ctx.save_for_backward(A, b, x)
+        return x
 
-  @staticmethod
-  def backward(ctx, grad):
-    # Recover context
-    A, b, x = ctx.saved_tensors
-    # Compute gradient with respect to b
-    gradb = SparseSolve.apply(A.t(), grad)
-    # The gradient with respect to the (dense) matrix A would be something like
-    # -gradb @ x.T but we are only interested in the gradient with respect to
-    # the (non-zero) values of A
-    gradAidx = A.indices()
-    mgradbselect = -gradb.index_select(0,gradAidx[0,:])
-    xselect = x.index_select(0,gradAidx[1,:])
-    mgbx = mgradbselect * xselect
-    if x.dim() == 1:
-      gradAvals = mgbx
-    else:
-      gradAvals = torch.sum( mgbx, dim=1 )
-    gradAs = torch.sparse_coo_tensor(gradAidx, gradAvals, A.shape)
-    return gradAs, gradb
+    @staticmethod
+    def backward(ctx, grad_output):
+        A, _, x = ctx.saved_tensors
+        
+        # Calculate the gradient with respect to x
+        grad_x = torch.sparse.mm(A.t(), torch.sparse.mm(A, x) - b)  # Adjusted for least squares
+        
+        # Backpropagate the gradient to previous layer
+        return None, grad_x * grad_output
 
 
 if __name__ == "__main__":
