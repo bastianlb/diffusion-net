@@ -49,18 +49,6 @@ def compute_correspondence_explicit(feat_x, feat_y, evals_x, evals_y, evecs_tran
     Has no trainable parameters.
     """
 
-    # save all input data with torch
-    torch.save({
-        'feat_x': feat_x,
-        'feat_y': feat_y,
-        'evals_x': evals_x,
-        'evals_y': evals_y,
-        'evecs_trans_x': evecs_trans_x,
-        'evecs_trans_y': evecs_trans_y,
-        'lambda_param': lambda_param
-    }, 'input_params.pth')
-
-
     feat_x, feat_y = feat_x.unsqueeze(0), feat_y.unsqueeze(0)
     evecs_trans_x, evecs_trans_y = evecs_trans_x.unsqueeze(0), evecs_trans_y.unsqueeze(0)
     evals_x, evals_y = evals_x.unsqueeze(0), evals_y.unsqueeze(0)
@@ -205,7 +193,6 @@ class FunctionalMapCorrespondenceWithDiffusionNetFeatures(nn.Module):
         C_explicit= compute_correspondence_explicit(feat1, feat2, evals1, evals2, evecs_trans1, evecs_trans2, lambda_param=self.lambda_param)
         print("explicit", time.time() - t0)
         C_diff = (torch.abs(C_expanded - C_explicit))
-        __import__('ipdb').set_trace()
         print("diff: ", torch.sum(C_diff).item())
         import matplotlib.pyplot as plt
 

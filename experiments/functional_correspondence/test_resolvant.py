@@ -73,24 +73,24 @@ def test_explicit(feat_x, feat_y, evals_x, evals_y, evecs_trans_x, evecs_trans_y
 
 
 if __name__ == "__main__":
-    N = 20
-    C = np.random.rand(N, N)
-    # L_x = np.diag(np.random.rand(N))
-    # L_y = np.diag(np.random.rand(N))
-    # main(C, L_x, L_y, d=N)
-    # verify_gradient(d=N)
-
     # generate random torch data for testing as input args
     device = "cuda:1"
-    N = 5000
-    m = 128
-    k = 128
-    feats_x = torch.rand(N, m, device=device)
-    feats_y = torch.rand(N, m, device=device)
-    evals_x = torch.rand(k, device=device)
-    evals_y = torch.rand(k, device=device)
-    evecs_trans_x = torch.rand(k, N, device=device)
-    evecs_trans_y = torch.rand(k, N, device=device)
-    C_expanded = test_expanded(feats_x, feats_y, evals_x, evals_y, evecs_trans_x, evecs_trans_y)
-    C_explicit = test_explicit(feats_x, feats_y, evals_x, evals_y, evecs_trans_x, evecs_trans_y).squeeze(0)
+    # feats_x = torch.rand(N, m, device=device)
+    # feats_y = torch.rand(N, m, device=device)
+    # evals_x = torch.rand(k, device=device)
+    # evals_y = torch.rand(k, device=device)
+    # evecs_trans_x = torch.rand(k, N, device=device)
+    # evecs_trans_y = torch.rand(k, N, device=device)
+    # save all input data with torch
+    loaded_params = torch.load('input_params.pth')
+
+    # Extracting each parameter
+    feat_x = loaded_params['feat_x'].to(device)
+    feat_y = loaded_params['feat_y'].to(device)
+    evals_x = loaded_params['evals_x'].to(device)
+    evals_y = loaded_params['evals_y'].to(device)
+    evecs_trans_x = loaded_params['evecs_trans_x'].to(device)
+    evecs_trans_y = loaded_params['evecs_trans_y'].to(device)
+    C_expanded = test_expanded(feat_x, feat_y, evals_x, evals_y, evecs_trans_x, evecs_trans_y)
+    C_explicit = test_explicit(feat_x, feat_y, evals_x, evals_y, evecs_trans_x, evecs_trans_y).squeeze(0)
     assert torch.allclose(C_expanded, C_explicit)
