@@ -39,7 +39,7 @@ input_features = args.input_features # one of ['xyz', 'hks']
 k_eig = 96
 
 # functional maps settings
-n_fmap = 128 # number of eigenvectors used within functional maps
+n_fmap = 30 # number of eigenvectors used within functional maps
 n_feat = 128 # dimension of features computed by DiffusionNet extractor
 lambda_param = 1e-3 # functional map block regularization parameter
 

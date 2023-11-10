@@ -49,6 +49,16 @@ def compute_correspondence_explicit(feat_x, feat_y, evals_x, evals_y, evecs_tran
     Has no trainable parameters.
     """
 
+    # torch.save({
+    #     'feat_x': feat_x,
+    #     'feat_y': feat_y,
+    #     'evals_x': evals_x,
+    #     'evals_y': evals_y,
+    #     'evecs_trans_x': evecs_trans_x,
+    #     'evecs_trans_y': evecs_trans_y,
+    #     'lambda_param': lambda_param
+    # }, 'input_params.pth')
+
     feat_x, feat_y = feat_x.unsqueeze(0), feat_y.unsqueeze(0)
     evecs_trans_x, evecs_trans_y = evecs_trans_x.unsqueeze(0), evecs_trans_y.unsqueeze(0)
     evals_x, evals_y = evals_x.unsqueeze(0), evals_y.unsqueeze(0)
