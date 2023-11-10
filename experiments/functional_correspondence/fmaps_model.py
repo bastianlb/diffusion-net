@@ -3,8 +3,6 @@ import sys
 
 import torch
 import torch.nn as nn
-import cvxpy as cp
-from cvxpylayers.torch import CvxpyLayer
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "../../src/"))
 import diffusion_net
@@ -16,6 +14,8 @@ def compute_correspondence_iterative(feat_x, feat_y, evals_x, evals_y, evecs_tra
 
     Has no trainable parameters.
     """
+    import cvxpy as cp
+    from cvxpylayers.torch import CvxpyLayer
 
     feat_x, feat_y = feat_x.unsqueeze(0), feat_y.unsqueeze(0)
     evecs_trans_x, evecs_trans_y = evecs_trans_x.unsqueeze(0), evecs_trans_y.unsqueeze(0)
@@ -49,6 +49,18 @@ def compute_correspondence_explicit(feat_x, feat_y, evals_x, evals_y, evecs_tran
     Has no trainable parameters.
     """
 
+    # save all input data with torch
+    torch.save({
+        'feat_x': feat_x,
+        'feat_y': feat_y,
+        'evals_x': evals_x,
+        'evals_y': evals_y,
+        'evecs_trans_x': evecs_trans_x,
+        'evecs_trans_y': evecs_trans_y,
+        'lambda_param': lambda_param
+    }, 'input_params.pth')
+
+
     feat_x, feat_y = feat_x.unsqueeze(0), feat_y.unsqueeze(0)
     evecs_trans_x, evecs_trans_y = evecs_trans_x.unsqueeze(0), evecs_trans_y.unsqueeze(0)
     evals_x, evals_y = evals_x.unsqueeze(0), evals_y.unsqueeze(0)
@@ -74,6 +86,42 @@ def compute_correspondence_explicit(feat_x, feat_y, evals_x, evals_y, evecs_tran
     return C
 
 
+def sparse_kron(D1, D2):
+    # Assuming D1 and D2 are diagonal matrices represented as 1D tensors
+    i = torch.cartesian_prod(torch.arange(len(D1)), torch.arange(len(D2))).t()
+    v = torch.outer(D1, D2).flatten()
+    size = (len(D1) * len(D2), len(D1) * len(D2))
+    return torch.sparse_coo_tensor(i, v, size, dtype=D1.dtype, device=D1.device)
+
+
+def sparse_kron_A_I(dense_matrix, identity_size):
+    m, n = dense_matrix.shape
+    sparse_shape = (m * identity_size, n * identity_size)
+    
+    # Find the non-zero entries in the dense matrix
+    rows, cols = torch.nonzero(dense_matrix, as_tuple=True)
+    
+    # Calculate the starting row and column indices in the sparse matrix for each non-zero entry in the dense matrix
+    row_starts = rows * identity_size
+    col_starts = cols * identity_size
+    
+    # Generate the row and column indices within each block for the sparse matrix
+    block_indices = torch.arange(identity_size, device=dense_matrix.device)
+    
+    # Calculate the indices for the non-zero entries in the sparse matrix (only diagonal blocks)
+    sparse_rows = (row_starts[:, None] + block_indices).reshape(-1)
+    sparse_cols = (col_starts[:, None] + block_indices).reshape(-1)
+    
+    # Generate the values for the non-zero entries in the sparse matrix
+    sparse_values = dense_matrix[rows, cols].repeat_interleave(identity_size).to(dense_matrix.device)
+    
+    # Create the sparse matrix
+    sparse_indices = torch.stack((sparse_rows, sparse_cols))
+    sparse_matrix = torch.sparse_coo_tensor(sparse_indices, sparse_values, sparse_shape, device=dense_matrix.device)
+    
+    return sparse_matrix
+
+
 def compute_correspondence_expanded(feat_x, feat_y, evals_x, evals_y, evecs_trans_x, evecs_trans_y, lambda_param=1e-3):
     """
     Computes the functional map correspondence matrix C given features from two shapes.
@@ -88,14 +136,17 @@ def compute_correspondence_expanded(feat_x, feat_y, evals_x, evals_y, evecs_tran
     vec_B = B.T.reshape(m * k, 1).contiguous()
 
     A_t = A.T.contiguous()
-    Ik = torch.eye(k, device=A.device, dtype=torch.float32)
 
-    At_Ik = torch.kron(A_t, Ik)
+    # At_Ik = sparse_kron_A_I(A_t, k)
+    At_Ik = torch.kron(A_t, torch.eye(k, device=A.device))
+    # assert torch.equal(At_Ik.to_dense(), At_Ik_dense)
 
-    lx = torch.diag(evals_x.squeeze(0))
-    ly = torch.diag(evals_y.squeeze(0))
-    lx_Ik = torch.kron(lx, Ik)
-    Ik_ly = torch.kron(Ik, ly)
+    # lx_Ik = sparse_kron(evals_x.squeeze(0), torch.ones(k, device=A.device))
+    lx_Ik = torch.kron(torch.diag(evals_x.squeeze(0)), torch.eye(k, device=A.device))
+    # assert torch.equal(lx_Ik.to_dense(), lx_Ik_dense)
+    # Ik_ly = sparse_kron(torch.ones(k, device=A.device), evals_y.squeeze(0))
+    Ik_ly = torch.kron(torch.eye(k, device=A.device), torch.diag(evals_y.squeeze(0)))
+    # assert torch.equal(Ik_ly.to_dense(), Ik_ly_dense)
     Delta = (lx_Ik - Ik_ly)
 
     first = At_Ik.T @ At_Ik
@@ -103,7 +154,7 @@ def compute_correspondence_expanded(feat_x, feat_y, evals_x, evals_y, evecs_tran
     rhs = At_Ik.T @ vec_B
     op = first + lambda_param * second
 
-    C = torch.linalg.solve(op, rhs)
+    C = torch.linalg.solve(op.to_dense(), rhs)
 
     return C.reshape(k, k).T
 
@@ -154,6 +205,7 @@ class FunctionalMapCorrespondenceWithDiffusionNetFeatures(nn.Module):
         C_explicit= compute_correspondence_explicit(feat1, feat2, evals1, evals2, evecs_trans1, evecs_trans2, lambda_param=self.lambda_param)
         print("explicit", time.time() - t0)
         C_diff = (torch.abs(C_expanded - C_explicit))
+        __import__('ipdb').set_trace()
         print("diff: ", torch.sum(C_diff).item())
         import matplotlib.pyplot as plt
 

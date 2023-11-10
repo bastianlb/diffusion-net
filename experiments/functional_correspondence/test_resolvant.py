@@ -10,6 +10,11 @@ import diffusion_net
 
 
 def test_expanded(feat_x, feat_y, evals_x, evals_y, evecs_trans_x, evecs_trans_y, lambda_param=1e-3):
+    """
+    Computes the functional map correspondence matrix C given features from two shapes.
+
+    Has no trainable parameters.
+    """
     A = evecs_trans_x @ feat_x
     B = evecs_trans_y @ feat_y
     # A and B should be same shape
@@ -18,14 +23,11 @@ def test_expanded(feat_x, feat_y, evals_x, evals_y, evecs_trans_x, evecs_trans_y
     vec_B = B.T.reshape(m * k, 1).contiguous()
 
     A_t = A.T.contiguous()
-    Ik = torch.eye(k, device=A.device, dtype=torch.float32)
 
-    At_Ik = torch.kron(A_t, Ik)
+    At_Ik = torch.kron(A_t, torch.eye(k, device=A.device))
 
-    lx = torch.diag(evals_x.squeeze(0))
-    ly = torch.diag(evals_y.squeeze(0))
-    lx_Ik = torch.kron(lx, Ik)
-    Ik_ly = torch.kron(Ik, ly)
+    lx_Ik = torch.kron(torch.diag(evals_x.squeeze(0)), torch.eye(k, device=A.device))
+    Ik_ly = torch.kron(torch.eye(k, device=A.device), torch.diag(evals_y.squeeze(0)))
     Delta = (lx_Ik - Ik_ly)
 
     first = At_Ik.T @ At_Ik
@@ -33,7 +35,7 @@ def test_expanded(feat_x, feat_y, evals_x, evals_y, evecs_trans_x, evecs_trans_y
     rhs = At_Ik.T @ vec_B
     op = first + lambda_param * second
 
-    C = torch.linalg.solve(op, rhs)
+    C = torch.linalg.solve(op.to_dense(), rhs)
 
     return C.reshape(k, k).T
 
@@ -91,5 +93,4 @@ if __name__ == "__main__":
     evecs_trans_y = torch.rand(k, N, device=device)
     C_expanded = test_expanded(feats_x, feats_y, evals_x, evals_y, evecs_trans_x, evecs_trans_y)
     C_explicit = test_explicit(feats_x, feats_y, evals_x, evals_y, evecs_trans_x, evecs_trans_y).squeeze(0)
-    __import__('ipdb').set_trace()
     assert torch.allclose(C_expanded, C_explicit)

@@ -1,12 +1,12 @@
 from functools import wraps
-from time import time
+from time import time, sleep
 import psutil
 
 import numpy as np
 import torch
 
 
-def timing_and_memory(f, N=10):
+def timing_and_memory(f, N=1):
     @wraps(f)
     def wrap(*args, **kw):
         total_time = 0
@@ -47,6 +47,8 @@ def timing_and_memory(f, N=10):
                 
                 total_cuda_allocated += (final_cuda_allocated - init_cuda_allocated)
                 total_cuda_reserved += (final_cuda_reserved - init_cuda_reserved)
+            # wait and make sure memory clears
+            sleep(1)
         
         avg_time = total_time / N
         avg_cpu_memory = total_cpu_memory / N
@@ -67,15 +69,15 @@ def timing_and_memory(f, N=10):
 
 
 def main(C, L_x, L_y, d=5):
-# Convert the numpy matrices to PyTorch tensors
+    # Convert the numpy matrices to PyTorch tensors
     C_torch = torch.tensor(C, dtype=torch.float64)
     L_x_torch = torch.tensor(L_x, dtype=torch.float64)
     L_y_torch = torch.tensor(L_y, dtype=torch.float64)
 
-# Compute the matrix difference CLx - LyC and calculate the Frobenius norm
+    # Compute the matrix difference CLx - LyC and calculate the Frobenius norm
     explicit = C @ L_x - L_y @ C
 
-# Compute the equivalent norm using the vectorized form with Kronecker products
+    # Compute the equivalent norm using the vectorized form with Kronecker products
     vec_C = C.flatten('F')
     left = np.kron(L_x, np.eye(d))
     right = np.kron(np.eye(d), L_y)
@@ -83,11 +85,11 @@ def main(C, L_x, L_y, d=5):
 
     print("numpy version: ", np.linalg.norm(np.abs(explicit.flatten('F') - expanded)))
 
-# Compute the matrix difference CLx - LyC and calculate the Frobenius norm using built-in function in PyTorch
+    # Compute the matrix difference CLx - LyC and calculate the Frobenius norm using built-in function in PyTorch
     explicit_torch = C_torch @ L_x_torch - L_y_torch @ C_torch
 
 
-# Compute the equivalent norm using the vectorized form with built-in Kronecker product in PyTorch
+    # Compute the equivalent norm using the vectorized form with built-in Kronecker product in PyTorch
     vec_C_torch = C_torch.T.flatten()  # Equivalent to flatten in NumPy
     left_torch = torch.kron(L_x_torch, torch.eye(d, dtype=torch.float64))
     right_torch = torch.kron(torch.eye(d, dtype=torch.float64), L_y_torch)
@@ -170,7 +172,7 @@ def sparse_kron_A_I(dense_matrix, identity_size):
     col_starts = cols * identity_size
     
     # Generate the row and column indices within each block for the sparse matrix
-    block_indices = torch.arange(identity_size)
+    block_indices = torch.arange(identity_size, device=dense_matrix.device)
     
     # Calculate the indices for the non-zero entries in the sparse matrix (only diagonal blocks)
     sparse_rows = (row_starts[:, None] + block_indices).reshape(-1)
@@ -227,24 +229,46 @@ def test_memory_efficient(feat_x, feat_y, evals_x, evals_y, evecs_trans_x, evecs
     A_t = A.T.contiguous()
 
     At_Ik = sparse_kron_A_I(A_t, k)
-    # assert torch.allclose(At_Ik.to_dense(), torch.kron(A_t, torch.eye(k, device=A.device, dtype=A.dtype)))
+    assert torch.allclose(At_Ik.to_dense(), torch.kron(A_t, torch.eye(k, device=A.device, dtype=A.dtype)))
     lx_Ik = sparse_kron(evals_x.squeeze(0), torch.ones(k, device=A.device, dtype=A.dtype))
-    # assert torch.allclose(lx_Ik.to_dense(), torch.kron(torch.diag(evals_x.squeeze(0)), torch.eye(k, device=A.device, dtype=A.dtype)))
+    assert torch.allclose(lx_Ik.to_dense(), torch.kron(torch.diag(evals_x.squeeze(0)), torch.eye(k, device=A.device, dtype=A.dtype)))
     Ik_ly = sparse_kron(torch.ones(k, device=A.device, dtype=A.dtype), evals_y.squeeze(0))
-    # assert torch.allclose(Ik_ly.to_dense(), torch.kron(torch.eye(k, device=A.device, dtype=A.dtype), torch.diag(evals_y.squeeze(0))))
+    assert torch.allclose(Ik_ly.to_dense(), torch.kron(torch.eye(k, device=A.device, dtype=A.dtype), torch.diag(evals_y.squeeze(0))))
 
     Delta = (lx_Ik - Ik_ly)
 
-    first = At_Ik.T @ At_Ik
-    second = Delta.T @ Delta
-    rhs = At_Ik.T @ vec_B
+    first = torch.sparse.mm(At_Ik.T, At_Ik)
+    second = torch.sparse.mm(Delta.T, Delta)
+    rhs = torch.sparse.mm(At_Ik.T, vec_B)
     op = first + lambda_param * second
 
     from sparse_solve import SparseSolve
 
     sparsesolve = SparseSolve.apply
 
-    C = sparsesolve(op, rhs)
+    C = sparsesolve(op, rhs.squeeze(1))
+
+    Ik = torch.eye(k, device=A.device, dtype=torch.float32)
+
+    At_Ik_dense = torch.kron(A_t, Ik)
+
+    lx = torch.diag(evals_x.squeeze(0))
+    ly = torch.diag(evals_y.squeeze(0))
+    lx_Ik_dense = torch.kron(lx, Ik)
+    Ik_ly_dense = torch.kron(Ik, ly)
+    Delta_dense = (lx_Ik_dense - Ik_ly_dense)
+
+    # replace these all with the dense copy
+    first_dense = At_Ik_dense.T @ At_Ik_dense
+    second_dense = Delta_dense.T @ Delta_dense
+    rhs_dense = At_Ik_dense.T @ vec_B
+    op_dense = first_dense + lambda_param * second_dense
+
+    assert torch.allclose(rhs.to_dense(), rhs_dense)
+    assert torch.allclose(op.to_dense(), op_dense)
+
+    C_dense = torch.linalg.solve(op_dense, rhs_dense)
+    assert torch.allclose(C, C_dense)
 
     return C.reshape(k, k).T
 
@@ -258,14 +282,16 @@ if __name__ == "__main__":
     # verify_gradient(d=N)
 
     # generate random torch data for testing as input args
+    device = "cuda:1"
     N = 5000
     m = 128
-    k = 30
-    feats_x = torch.rand(N, m)
-    feats_y = torch.rand(N, m)
-    evals_x = torch.rand(k)
-    evals_y = torch.rand(k)
-    evecs_trans_x = torch.rand(k, N)
-    evecs_trans_y = torch.rand(k, N)
-    test_expanded(feats_x, feats_y, evals_x, evals_y, evecs_trans_x, evecs_trans_y)
-    test_memory_efficient(feats_x, feats_y, evals_x, evals_y, evecs_trans_x, evecs_trans_y)
+    k = 128
+    feats_x = torch.rand(N, m, device=device)
+    feats_y = torch.rand(N, m, device=device)
+    evals_x = torch.rand(k, device=device)
+    evals_y = torch.rand(k, device=device)
+    evecs_trans_x = torch.rand(k, N, device=device)
+    evecs_trans_y = torch.rand(k, N, device=device)
+    C_expanded = test_expanded(feats_x, feats_y, evals_x, evals_y, evecs_trans_x, evecs_trans_y)
+    C_efficient = test_memory_efficient(feats_x, feats_y, evals_x, evals_y, evecs_trans_x, evecs_trans_y)
+    assert torch.allclose(C_expanded, C_efficient)

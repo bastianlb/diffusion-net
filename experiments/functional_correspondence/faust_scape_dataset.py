@@ -186,7 +186,7 @@ class FaustScapeDataset(Dataset):
         vts1, vts2 = shape1[10], shape2[10]
         evec_1, evec_2 = shape1[6][:, :self.n_fmap], shape2[6][:, :self.n_fmap]
         evec_1_a, evec_2_a = evec_1[vts1,:], evec_2[vts2,:]
-        solve_out = torch.lstsq(evec_2_a, evec_1_a)[0] # TODO replace with torch.linalg version in future torch
+        solve_out = torch.linalg.lstsq(evec_2_a, evec_1_a)[0] # TODO replace with torch.linalg version in future torch
         C_gt = solve_out[:evec_1_a.size(-1)].t()
         resids = solve_out[evec_1_a.size(-1):]
 
